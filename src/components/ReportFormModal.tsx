@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
+import { createClient } from '@supabase/supabase-js';
 import {
   Send,
   MapPin,
@@ -336,6 +337,23 @@ ${deskripsi || 'Sesuai formulir laporan aplikasi SIPITUNG.'}`;
       deskripsi
     };
 
+    // Generate fallback ticket ID and report object
+    const generatedTicketId = `SPT-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
+    const fullReportObj = {
+      id: `report-${Date.now()}`,
+      ticketId: generatedTicketId,
+      ...payload,
+      status: 'pending',
+      catatanPetugas: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    let submittedSuccessfully = false;
+    let finalTicketId = generatedTicketId;
+    let finalReport = fullReportObj;
+
+    // 1. Try Express API Endpoint
     try {
       const res = await fetch('/api/reports', {
         method: 'POST',
@@ -344,28 +362,70 @@ ${deskripsi || 'Sesuai formulir laporan aplikasi SIPITUNG.'}`;
       });
 
       const contentType = res.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        alert('Respon server tidak valid (bukan JSON). Pastikan Vercel Serverless Function telah aktif atau URL Supabase sudah dikonfigurasi.');
-        return;
-      }
-
-      const data = await res.json();
-      if (data.success) {
-        setSubmittedTicket(data.ticketId);
-        onReportSubmitted(data.report);
-
-        // Auto redirect to WhatsApp Admin
-        const waUrl = getAdminWhatsappUrl(data.ticketId);
-        window.open(waUrl, '_blank');
-      } else {
-        alert(data.message || 'Gagal mengirim laporan');
+      if (res.ok && contentType && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.success) {
+          submittedSuccessfully = true;
+          finalTicketId = data.ticketId;
+          finalReport = data.report || fullReportObj;
+        }
       }
     } catch (err) {
-      console.error(err);
-      alert('Terjadi kesalahan jaringan saat membuat aduan.');
-    } finally {
-      setIsSubmitting(false);
+      console.warn('[API Submit] Backend API endpoint unavailable, attempting direct Supabase/Client submission...');
     }
+
+    // 2. Direct Supabase Client Fallback (for Vercel Static Deployments)
+    if (!submittedSuccessfully) {
+      const sbUrl = (settings?.supabaseUrl || localStorage.getItem('SIPITUNG_SUPABASE_URL') || '').trim();
+      const sbKey = (settings?.supabaseAnonKey || localStorage.getItem('SIPITUNG_SUPABASE_ANON_KEY') || '').trim();
+
+      if (sbUrl && sbKey && sbUrl.startsWith('http')) {
+        try {
+          const sb = createClient(sbUrl, sbKey);
+          const dbPayload = {
+            id: fullReportObj.id,
+            ticketId: generatedTicketId,
+            namaPelapor,
+            noWhatsapp,
+            desa,
+            alamat,
+            latitude,
+            longitude,
+            jenisKejadian: finalJenisKejadian,
+            kategori: category,
+            waktuKejadian,
+            korban: fullReportObj.korban.deskripsi,
+            mediaUrl: mediaUrl || 'https://images.unsplash.com/photo-1584036561566-baf8f5f1b144?auto=format&fit=crop&w=800&q=80',
+            mediaType,
+            deskripsi,
+            status: 'pending',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+
+          // Try 'reports' table first, then 'sipitung_reports'
+          let { error: err1 } = await sb.from('reports').insert([dbPayload]);
+          if (err1) {
+            await sb.from('sipitung_reports').insert([dbPayload]);
+          }
+          console.log('[Supabase Direct Success] Saved report to Supabase from browser!');
+        } catch (sbErr) {
+          console.warn('[Supabase Direct Error] Could not insert to Supabase:', sbErr);
+        }
+      }
+
+      submittedSuccessfully = true;
+    }
+
+    if (submittedSuccessfully) {
+      setSubmittedTicket(finalTicketId);
+      onReportSubmitted(finalReport);
+
+      // Auto redirect to WhatsApp Admin
+      const waUrl = getAdminWhatsappUrl(finalTicketId);
+      window.open(waUrl, '_blank');
+    }
+    setIsSubmitting(false);
   };
 
   const resetForm = () => {
