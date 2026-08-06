@@ -539,11 +539,11 @@ app.get('/api/reports', async (req: Request, res: Response) => {
     const q = String(search).toLowerCase();
     filtered = filtered.filter(
       r =>
-        r.ticketId.toLowerCase().includes(q) ||
-        r.namaPelapor.toLowerCase().includes(q) ||
-        r.alamat.toLowerCase().includes(q) ||
-        r.noWhatsapp.includes(q) ||
-        r.deskripsi.toLowerCase().includes(q)
+        (r.ticketId && String(r.ticketId).toLowerCase().includes(q)) ||
+        (r.namaPelapor && String(r.namaPelapor).toLowerCase().includes(q)) ||
+        (r.alamat && String(r.alamat).toLowerCase().includes(q)) ||
+        (r.noWhatsapp && String(r.noWhatsapp).includes(q)) ||
+        (r.deskripsi && String(r.deskripsi).toLowerCase().includes(q))
     );
   }
 
@@ -571,9 +571,11 @@ app.get('/api/reports', async (req: Request, res: Response) => {
 });
 
 // GET Single Report by Ticket or ID
-app.get('/api/reports/:id', (req: Request, res: Response) => {
-  const param = req.params.id;
-  const found = reportsStore.find(r => r.id === param || r.ticketId.toUpperCase() === param.toUpperCase());
+app.get(['/api/reports/:id', '/reports/:id'], (req: Request, res: Response) => {
+  const param = (req.params.id || '').trim();
+  const found = reportsStore.find(
+    r => r && (r.id === param || (r.ticketId && String(r.ticketId).toUpperCase() === param.toUpperCase()))
+  );
   if (!found) {
     res.status(404).json({ success: false, message: 'Laporan tidak ditemukan' });
     return;
@@ -582,11 +584,11 @@ app.get('/api/reports/:id', (req: Request, res: Response) => {
 });
 
 // GET Report Photo Directly (For WhatsApp Link Viewing)
-app.get('/api/reports/:id/photo', async (req: Request, res: Response) => {
+app.get(['/api/reports/:id/photo', '/reports/:id/photo'], async (req: Request, res: Response) => {
   try {
     const param = (req.params.id || '').trim();
     let found = reportsStore.find(
-      r => r.id === param || r.ticketId.toUpperCase() === param.toUpperCase()
+      r => r && (r.id === param || (r.ticketId && String(r.ticketId).toUpperCase() === param.toUpperCase()))
     );
 
     // 1. Try fetching all reports from Supabase if memory is empty
@@ -595,7 +597,7 @@ app.get('/api/reports/:id/photo', async (req: Request, res: Response) => {
       if (sbResult && sbResult.reports.length > 0) {
         reportsStore = sbResult.reports;
         found = reportsStore.find(
-          r => r.id === param || r.ticketId.toUpperCase() === param.toUpperCase()
+          r => r && (r.id === param || (r.ticketId && String(r.ticketId).toUpperCase() === param.toUpperCase()))
         );
       }
     }
@@ -605,10 +607,10 @@ app.get('/api/reports/:id/photo', async (req: Request, res: Response) => {
       const sb = getSupabaseClient();
       if (sb) {
         for (const tbl of ['reports', 'sipitung_reports']) {
-          for (const col of ['id', 'ticketId', 'ticket_id', 'ticketid']) {
+          for (const col of ['ticketId', 'ticket_id', 'ticketid', 'id']) {
             try {
               const { data } = await sb.from(tbl).select('*').ilike(col, param).limit(1);
-              if (data && data.length > 0) {
+              if (data && data.length > 0 && data[0]) {
                 found = fromSupabaseRecord(data[0]);
                 break;
               }
