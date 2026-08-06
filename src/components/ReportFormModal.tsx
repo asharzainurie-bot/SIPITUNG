@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from '../lib/supabase';
 import {
   Send,
   MapPin,
@@ -376,12 +376,9 @@ ${deskripsi || 'Sesuai formulir laporan aplikasi SIPITUNG.'}`;
 
     // 2. Direct Supabase Client Fallback (for Vercel Static Deployments)
     if (!submittedSuccessfully) {
-      const sbUrl = (settings?.supabaseUrl || localStorage.getItem('SIPITUNG_SUPABASE_URL') || '').trim();
-      const sbKey = (settings?.supabaseAnonKey || localStorage.getItem('SIPITUNG_SUPABASE_ANON_KEY') || '').trim();
-
-      if (sbUrl && sbKey && sbUrl.startsWith('http')) {
-        try {
-          const sb = createClient(sbUrl, sbKey);
+      try {
+        const sb = getSupabaseClient(settings);
+        if (sb) {
           const nowIso = new Date().toISOString();
           const defaultMedia = mediaUrl || 'https://images.unsplash.com/photo-1584036561566-baf8f5f1b144?auto=format&fit=crop&w=800&q=80';
 
@@ -463,9 +460,9 @@ ${deskripsi || 'Sesuai formulir laporan aplikasi SIPITUNG.'}`;
           if (saved) {
             console.log('[Supabase Direct Success] Saved report to Supabase from browser!');
           }
-        } catch (sbErr) {
-          console.warn('[Supabase Direct Error] Could not insert to Supabase:', sbErr);
         }
+      } catch (sbErr) {
+        console.warn('[Supabase Direct Error] Could not insert to Supabase:', sbErr);
       }
 
       submittedSuccessfully = true;
