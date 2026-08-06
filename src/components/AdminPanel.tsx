@@ -236,11 +236,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         return;
       }
 
-      // Test write / insert permission directly from browser
+      // Test write / insert permission directly from browser with multi-schema fallback
       const testId = 'test-' + Date.now();
-      const dummyPayload = {
+      const testTicket = 'TEST-VERCEL-' + Math.floor(100 + Math.random() * 900);
+      const nowIso = new Date().toISOString();
+
+      const camelPayload = {
         id: testId,
-        ticketId: 'TEST-VERCEL-' + Math.floor(100 + Math.random() * 900),
+        ticketId: testTicket,
         namaPelapor: 'UJI SYSTEM SUPABASE VERCEL',
         noWhatsapp: '081234567890',
         desa: 'Tulis',
@@ -249,7 +252,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         longitude: 109.8168,
         jenisKejadian: 'uji_sistem',
         kategori: 'bencana',
-        waktuKejadian: new Date().toISOString(),
+        waktuKejadian: nowIso,
         korban: 'Nihil',
         mediaUrl: 'https://images.unsplash.com/photo-1584036561566-baf8f5f1b144?auto=format&fit=crop&w=800&q=80',
         mediaType: 'image',
@@ -257,11 +260,76 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         status: 'pending',
         catatanPetugas: '',
         petugasAssigned: '',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        createdAt: nowIso,
+        updatedAt: nowIso
       };
 
-      const { error: insertErr } = await sb.from(activeTable).insert([dummyPayload]);
+      const lowerPayload = {
+        id: testId,
+        ticketid: testTicket,
+        namapelapor: 'UJI SYSTEM SUPABASE VERCEL',
+        nowhatsapp: '081234567890',
+        desa: 'Tulis',
+        alamat: 'Tes Koneksi Vercel Client',
+        latitude: -6.9536,
+        longitude: 109.8168,
+        jeniskejadian: 'uji_sistem',
+        kategori: 'bencana',
+        waktukejadian: nowIso,
+        korban: 'Nihil',
+        mediaurl: 'https://images.unsplash.com/photo-1584036561566-baf8f5f1b144?auto=format&fit=crop&w=800&q=80',
+        mediatype: 'image',
+        deskripsi: 'Tes verifikasi hak akses simpan aduan dari Vercel.',
+        status: 'pending',
+        catatanpetugas: '',
+        petugasassigned: '',
+        createdat: nowIso,
+        updatedat: nowIso
+      };
+
+      const snakePayload = {
+        id: testId,
+        ticket_id: testTicket,
+        nama_pelapor: 'UJI SYSTEM SUPABASE VERCEL',
+        no_whatsapp: '081234567890',
+        desa: 'Tulis',
+        alamat: 'Tes Koneksi Vercel Client',
+        latitude: -6.9536,
+        longitude: 109.8168,
+        jenis_kejadian: 'uji_sistem',
+        kategori: 'bencana',
+        waktu_kejadian: nowIso,
+        korban: 'Nihil',
+        media_url: 'https://images.unsplash.com/photo-1584036561566-baf8f5f1b144?auto=format&fit=crop&w=800&q=80',
+        media_type: 'image',
+        deskripsi: 'Tes verifikasi hak akses simpan aduan dari Vercel.',
+        status: 'pending',
+        catatan_petugas: '',
+        petugas_assigned: '',
+        created_at: nowIso,
+        updated_at: nowIso
+      };
+
+      let insertErr: any = null;
+      let workedVariant = '';
+
+      const { error: err1 } = await sb.from(activeTable).insert([camelPayload]);
+      if (!err1) {
+        workedVariant = 'camelCase';
+      } else {
+        const { error: err2 } = await sb.from(activeTable).insert([lowerPayload]);
+        if (!err2) {
+          workedVariant = 'lowercase';
+        } else {
+          const { error: err3 } = await sb.from(activeTable).insert([snakePayload]);
+          if (!err3) {
+            workedVariant = 'snake_case';
+          } else {
+            insertErr = err3 || err2 || err1;
+          }
+        }
+      }
+
       if (!insertErr) {
         // Clean up test payload
         await sb.from(activeTable).delete().eq('id', testId);
@@ -269,7 +337,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         onSaveSettings({ ...formSettings, supabaseUrl: targetUrl, supabaseAnonKey: targetKey }, formContacts);
         setSupabaseTestStatus({
           success: true,
-          message: `🎉 KONEKSI & IZIN SIMPAN SUPABASE 100% BERHASIL!\n\nTabel "${activeTable}" terverifikasi dan siap menyimpan aduan secara langsung di Vercel!`
+          message: `🎉 KONEKSI & IZIN SIMPAN SUPABASE 100% BERHASIL! (Format Skema: ${workedVariant})\n\nTabel "${activeTable}" terverifikasi dan siap menyimpan aduan secara langsung di Vercel!`
         });
       } else {
         setSupabaseTestStatus({
@@ -354,12 +422,26 @@ ALTER TABLE reports ADD COLUMN IF NOT EXISTS "petugasAssigned" TEXT;
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMPTZ DEFAULT NOW();
 
--- Add snake_case column variants
+-- Add snake_case & lowercase column variants for 100% schema compatibility
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS ticket_id TEXT;
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS nama_pelapor TEXT;
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS no_whatsapp TEXT;
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS jenis_kejadian TEXT;
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS waktu_kejadian TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS media_url TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS media_type TEXT;
+
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS ticketid TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS namapelapor TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS nowhatsapp TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS jeniskejadian TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS waktukejadian TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS mediaurl TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS mediatype TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS catatanpetugas TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS petugasassigned TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS createdat TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS updatedat TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS media_url TEXT;
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS media_type TEXT;
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS catatan_petugas TEXT;
