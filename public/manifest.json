@@ -1,0 +1,22 @@
+{
+  "short_name": "SIPITUNG",
+  "name": "SIPITUNG - Siaga Pitulungan",
+  "icons": [
+    {
+      "src": "https://img.icons8.com/color/192/siren.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://img.icons8.com/color/512/siren.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#ffffff",
+  "theme_color": "#dc2626",
+  "display": "standalone",
+  "orientation": "portrait",
+  "description": "Layanan Aduan & Laporan Bencana Alam serta Gangguan Ketentraman dan Ketertiban Umum"
+}

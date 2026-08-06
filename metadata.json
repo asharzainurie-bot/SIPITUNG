@@ -1,0 +1,6 @@
+{
+  "name": "SIPITUNG (SIAGA PITULUNGAN)",
+  "description": "Aplikasi Layanan Aduan & Laporan Bencana Alam serta Gangguan Ketentraman & Ketertiban (Trantibum)",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
