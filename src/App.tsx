@@ -13,6 +13,7 @@ import { AuthModal } from './components/AuthModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
 
 import { Report, AppSettings, EmergencyContact, UserRole, ReportStatus } from './types';
+import { getSupabaseClient } from './lib/supabase';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('map');
@@ -58,17 +59,64 @@ export default function App() {
   }, []);
 
   const fetchReports = async () => {
+    let loadedFromApi = false;
     try {
       const res = await fetch('/api/reports');
       const contentType = res.headers.get('content-type');
       if (res.ok && contentType && contentType.includes('application/json')) {
         const data = await res.json();
-        if (data.success && data.reports) {
+        if (data.success && Array.isArray(data.reports) && data.reports.length > 0) {
           setReports(data.reports);
+          loadedFromApi = true;
         }
       }
     } catch (err) {
-      console.error('Failed to fetch reports:', err);
+      console.warn('API fetch unavailable, trying direct Supabase client...');
+    }
+
+    if (!loadedFromApi) {
+      try {
+        const sb = getSupabaseClient(settings);
+        if (sb) {
+          for (const tbl of ['reports', 'sipitung_reports']) {
+            const { data, error } = await sb.from(tbl).select('*');
+            if (!error && data && data.length > 0) {
+              const parsed = data.map((r: any) => {
+                let korbanObj = r.korban;
+                if (typeof r.korban === 'string') {
+                  try { korbanObj = JSON.parse(r.korban); } catch (e) { korbanObj = { deskripsi: r.korban }; }
+                }
+                return {
+                  id: String(r.id),
+                  ticketId: r.ticketId || r.ticket_id || r.ticketid || r.id,
+                  namaPelapor: r.namaPelapor || r.nama_pelapor || r.namapelapor || 'Warga Tulis',
+                  noWhatsapp: r.noWhatsapp || r.no_whatsapp || r.nowhatsapp || '',
+                  desa: r.desa || 'Tulis',
+                  alamat: r.alamat || 'Kecamatan Tulis',
+                  latitude: Number(r.latitude) || -6.9536,
+                  longitude: Number(r.longitude) || 109.8168,
+                  jenisKejadian: r.jenisKejadian || r.jenis_kejadian || r.jeniskejadian || 'lainnya',
+                  kategori: r.kategori || 'bencana',
+                  waktuKejadian: r.waktuKejadian || r.waktu_kejadian || r.waktukejadian || new Date().toISOString(),
+                  korban: korbanObj || { meninggal: 0, lukaBerat: 0, lukaRingan: 0, mengungsi: 0, rumahRusak: 0, deskripsi: 'Nihil' },
+                  mediaUrl: r.mediaUrl || r.media_url || r.mediaurl || '',
+                  mediaType: r.mediaType || r.media_type || r.mediatype || 'image',
+                  deskripsi: r.deskripsi || '',
+                  status: r.status || 'pending',
+                  catatanPetugas: r.catatanPetugas || r.catatan_petugas || r.catatanpetugas || '',
+                  petugasAssigned: r.petugasAssigned || r.petugas_assigned || r.petugasassigned || '',
+                  createdAt: r.createdAt || r.created_at || r.createdat || new Date().toISOString(),
+                  updatedAt: r.updatedAt || r.updated_at || r.updatedat || new Date().toISOString()
+                };
+              });
+              setReports(parsed);
+              break;
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Direct Supabase fetch error:', err);
+      }
     }
   };
 
