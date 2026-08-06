@@ -38,8 +38,8 @@ let appSettings = {
   contactEmail: 'kecamatan.tulis@batangkab.go.id',
   address: 'Kantor Kecamatan Tulis, Jl. Raya Tulis No. 1, Kec. Tulis, Kabupaten Batang, Jawa Tengah 51261',
   googleSheetsWebhookUrl: '',
-  supabaseUrl: process.env.SUPABASE_URL || '',
-  supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
+  supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://pumjlqdgpbhnzhhrtvdl.supabase.co',
+  supabaseAnonKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB1bWpscWRncGJobnpoaHJ0dmRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5OTY4NDksImV4cCI6MjEwMTU3Mjg0OX0.Fd7X9cvcYDgEuxdbl8vAtcE-cz9nNpCcS3mzaDSf3so',
   adminWhatsapp: '082327313277',
   adminPin: '12345678',
   ewsActive: true,
@@ -118,8 +118,8 @@ function getGeminiClient() {
 
 // Helper to initialize Supabase Client
 function getSupabaseClient() {
-  const url = appSettings.supabaseUrl || process.env.SUPABASE_URL;
-  const key = appSettings.supabaseAnonKey || process.env.SUPABASE_ANON_KEY;
+  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || appSettings.supabaseUrl || 'https://pumjlqdgpbhnzhhrtvdl.supabase.co';
+  const key = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || appSettings.supabaseAnonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB1bWpscWRncGJobnpoaHJ0dmRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5OTY4NDksImV4cCI6MjEwMTU3Mjg0OX0.Fd7X9cvcYDgEuxdbl8vAtcE-cz9nNpCcS3mzaDSf3so';
   if (!url || !key || !url.startsWith('http')) {
     return null;
   }
