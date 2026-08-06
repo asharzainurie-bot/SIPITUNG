@@ -1,7 +1,6 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
 
@@ -583,31 +582,89 @@ app.get('/api/reports/:id', (req: Request, res: Response) => {
 });
 
 // GET Report Photo Directly (For WhatsApp Link Viewing)
-app.get('/api/reports/:id/photo', (req: Request, res: Response) => {
-  const param = req.params.id;
-  const found = reportsStore.find(r => r.id === param || r.ticketId.toUpperCase() === param.toUpperCase());
-  
-  if (!found || !found.mediaUrl) {
-    res.status(404).send('Foto tidak ditemukan untuk laporan ini.');
-    return;
-  }
+app.get('/api/reports/:id/photo', async (req: Request, res: Response) => {
+  try {
+    const param = (req.params.id || '').trim();
+    let found = reportsStore.find(
+      r => r.id === param || r.ticketId.toUpperCase() === param.toUpperCase()
+    );
 
-  const mediaUrl = found.mediaUrl;
+    // 1. Try fetching all reports from Supabase if memory is empty
+    if (!found || !found.mediaUrl) {
+      const sbResult = await fetchReportsFromSupabase();
+      if (sbResult && sbResult.reports.length > 0) {
+        reportsStore = sbResult.reports;
+        found = reportsStore.find(
+          r => r.id === param || r.ticketId.toUpperCase() === param.toUpperCase()
+        );
+      }
+    }
 
-  if (mediaUrl.startsWith('data:image/')) {
-    // Parse base64 image and serve as binary image file
-    const mimeMatch = mediaUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,/);
-    const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-    const base64Data = mediaUrl.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
-    const imgBuffer = Buffer.from(base64Data, 'base64');
+    // 2. Target query directly on Supabase across all column variants
+    if (!found || !found.mediaUrl) {
+      const sb = getSupabaseClient();
+      if (sb) {
+        for (const tbl of ['reports', 'sipitung_reports']) {
+          for (const col of ['id', 'ticketId', 'ticket_id', 'ticketid']) {
+            try {
+              const { data } = await sb.from(tbl).select('*').ilike(col, param).limit(1);
+              if (data && data.length > 0) {
+                found = fromSupabaseRecord(data[0]);
+                break;
+              }
+            } catch (e) {
+              // continue
+            }
+          }
+          if (found && found.mediaUrl) break;
+        }
+      }
+    }
 
-    res.setHeader('Content-Type', mimeType);
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(imgBuffer);
-  } else if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
-    res.redirect(mediaUrl);
-  } else {
-    res.redirect(mediaUrl);
+    if (!found || !found.mediaUrl) {
+      // Return a clean graphic image response for missing photo
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.status(200).send(`
+        <svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
+          <rect width="100%" height="100%" fill="#1e293b"/>
+          <circle cx="300" cy="160" r="45" fill="#334155"/>
+          <path d="M280 160 C280 150 320 150 320 160 C320 180 290 180 290 195" stroke="#94a3b8" stroke-width="6" fill="none" stroke-linecap="round"/>
+          <circle cx="290" cy="215" r="4" fill="#94a3b8"/>
+          <text x="50%" y="270" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="20" fill="#f8fafc" font-weight="bold">FOTO ADUAN TIDAK DITEMUKAN</text>
+          <text x="50%" y="305" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#94a3b8">Nomor Tiket: ${param || 'SIPITUNG'}</text>
+          <text x="50%" y="335" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#64748b">Sistem Kedaruratan Kecamatan Tulis Batang</text>
+        </svg>
+      `.trim());
+      return;
+    }
+
+    const mediaUrl = found.mediaUrl;
+
+    if (mediaUrl.startsWith('data:image/') || mediaUrl.startsWith('data:video/') || mediaUrl.startsWith('data:application/')) {
+      // Parse base64 image and serve as binary image file
+      const mimeMatch = mediaUrl.match(/^data:([a-zA-Z0-9+\/.-]+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+      const base64Data = mediaUrl.replace(/^data:[a-zA-Z0-9+\/.-]+;base64,/, '');
+      const imgBuffer = Buffer.from(base64Data, 'base64');
+
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.send(imgBuffer);
+    } else if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
+      res.redirect(302, mediaUrl);
+    } else {
+      res.redirect(302, mediaUrl);
+    }
+  } catch (err: any) {
+    console.error('[Photo Route Error]', err);
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.status(200).send(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
+        <rect width="100%" height="100%" fill="#0f172a"/>
+        <text x="50%" y="190" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="22" fill="#ef4444" font-weight="bold">GAGAL MEMUAT FOTO ADUAN</text>
+        <text x="50%" y="235" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#94a3b8">${err.message || 'Error Server'}</text>
+      </svg>
+    `.trim());
   }
 });
 
@@ -975,6 +1032,7 @@ CREATE POLICY "Admin Update Access" ON sipitung_reports FOR UPDATE USING (true);
 // Vite Middleware & Production Serving
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa'
