@@ -382,7 +382,10 @@ ${deskripsi || 'Sesuai formulir laporan aplikasi SIPITUNG.'}`;
       if (sbUrl && sbKey && sbUrl.startsWith('http')) {
         try {
           const sb = createClient(sbUrl, sbKey);
-          const dbPayload = {
+          const nowIso = new Date().toISOString();
+          const defaultMedia = mediaUrl || 'https://images.unsplash.com/photo-1584036561566-baf8f5f1b144?auto=format&fit=crop&w=800&q=80';
+
+          const camelPayload = {
             id: fullReportObj.id,
             ticketId: generatedTicketId,
             namaPelapor,
@@ -395,20 +398,71 @@ ${deskripsi || 'Sesuai formulir laporan aplikasi SIPITUNG.'}`;
             kategori: category,
             waktuKejadian,
             korban: fullReportObj.korban.deskripsi,
-            mediaUrl: mediaUrl || 'https://images.unsplash.com/photo-1584036561566-baf8f5f1b144?auto=format&fit=crop&w=800&q=80',
+            mediaUrl: defaultMedia,
             mediaType,
             deskripsi,
             status: 'pending',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
+            createdAt: nowIso,
+            updatedAt: nowIso
           };
 
-          // Try 'reports' table first, then 'sipitung_reports'
-          let { error: err1 } = await sb.from('reports').insert([dbPayload]);
-          if (err1) {
-            await sb.from('sipitung_reports').insert([dbPayload]);
+          const lowerPayload = {
+            id: fullReportObj.id,
+            ticketid: generatedTicketId,
+            namapelapor: namaPelapor,
+            nowhatsapp: noWhatsapp,
+            desa,
+            alamat,
+            latitude,
+            longitude,
+            jeniskejadian: finalJenisKejadian,
+            kategori: category,
+            waktukejadian: waktuKejadian,
+            korban: fullReportObj.korban.deskripsi,
+            mediaurl: defaultMedia,
+            mediatype: mediaType,
+            deskripsi,
+            status: 'pending',
+            createdat: nowIso,
+            updatedat: nowIso
+          };
+
+          const snakePayload = {
+            id: fullReportObj.id,
+            ticket_id: generatedTicketId,
+            nama_pelapor: namaPelapor,
+            no_whatsapp: noWhatsapp,
+            desa,
+            alamat,
+            latitude,
+            longitude,
+            jenis_kejadian: finalJenisKejadian,
+            kategori: category,
+            waktu_kejadian: waktuKejadian,
+            korban: fullReportObj.korban.deskripsi,
+            media_url: defaultMedia,
+            media_type: mediaType,
+            deskripsi,
+            status: 'pending',
+            created_at: nowIso,
+            updated_at: nowIso
+          };
+
+          // Try 'reports' table first, then 'sipitung_reports' across camel, lower, snake
+          let saved = false;
+          for (const tbl of ['reports', 'sipitung_reports']) {
+            for (const p of [camelPayload, lowerPayload, snakePayload]) {
+              const { error } = await sb.from(tbl).insert([p]);
+              if (!error) {
+                saved = true;
+                break;
+              }
+            }
+            if (saved) break;
           }
-          console.log('[Supabase Direct Success] Saved report to Supabase from browser!');
+          if (saved) {
+            console.log('[Supabase Direct Success] Saved report to Supabase from browser!');
+          }
         } catch (sbErr) {
           console.warn('[Supabase Direct Error] Could not insert to Supabase:', sbErr);
         }
