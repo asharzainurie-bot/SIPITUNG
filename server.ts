@@ -182,6 +182,31 @@ function toSnakeRecord(r: any) {
   };
 }
 
+function toLowerRecord(r: any) {
+  return {
+    id: String(r.id),
+    ticketid: String(r.ticketId),
+    namapelapor: String(r.namaPelapor),
+    nowhatsapp: String(r.noWhatsapp),
+    desa: String(r.desa || 'Tulis'),
+    alamat: String(r.alamat),
+    latitude: Number(r.latitude) || -6.9536,
+    longitude: Number(r.longitude) || 109.8168,
+    jeniskejadian: String(r.jenisKejadian),
+    kategori: String(r.kategori),
+    waktukejadian: String(r.waktuKejadian),
+    korban: typeof r.korban === 'object' ? JSON.stringify(r.korban) : String(r.korban || ''),
+    mediaurl: String(r.mediaUrl || ''),
+    mediatype: String(r.mediaType || 'image'),
+    deskripsi: String(r.deskripsi || ''),
+    status: String(r.status || 'pending'),
+    catatanpetugas: String(r.catatanPetugas || ''),
+    petugasassigned: String(r.petugasAssigned || ''),
+    createdat: String(r.createdAt),
+    updatedat: String(r.updatedAt)
+  };
+}
+
 function fromSupabaseRecord(r: any) {
   let korbanObj = r.korban;
   if (typeof r.korban === 'string') {
@@ -228,14 +253,19 @@ async function saveReportToSupabase(newReport: any): Promise<{ success: boolean;
   const snakeFull = toSnakeRecord(newReport);
   const { id: _sId, ...snakeNoId } = snakeFull;
 
+  const lowerFull = toLowerRecord(newReport);
+  const { id: _lId, ...lowerNoId } = lowerFull;
+
   const camelKorbanObj = { ...camelFull, korban: newReport.korban };
   const snakeKorbanObj = { ...snakeFull, korban: newReport.korban };
 
   // Array of payload variants to try for maximum compatibility
   const payloadVariants = [
     { name: 'camelCase dengan ID', data: camelFull },
+    { name: 'lowercase dengan ID', data: lowerFull },
     { name: 'snake_case dengan ID', data: snakeFull },
     { name: 'camelCase auto-generated ID', data: camelNoId },
+    { name: 'lowercase auto-generated ID', data: lowerNoId },
     { name: 'snake_case auto-generated ID', data: snakeNoId },
     { name: 'camelCase dengan JSON Korban Object', data: camelKorbanObj },
     { name: 'snake_case dengan JSON Korban Object', data: snakeKorbanObj }
