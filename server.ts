@@ -321,7 +321,7 @@ async function saveReportToSupabase(newReport: any): Promise<{ success: boolean;
   return { success: false, error: lastErrMsg };
 }
 
-async function getReportPhotoMediaUrl(ticketIdOrId: string): Promise<string | null> {
+async function getReportWithMedia(ticketIdOrId: string): Promise<{ mediaUrl?: string; ticketId?: string; namaPelapor?: string; desa?: string; jenisKejadian?: string; deskripsi?: string; createdAt?: string } | null> {
   const param = (ticketIdOrId || '').trim();
   if (!param) return null;
 
@@ -330,10 +330,18 @@ async function getReportPhotoMediaUrl(ticketIdOrId: string): Promise<string | nu
     r => r && (r.id === param || (r.ticketId && String(r.ticketId).toUpperCase() === param.toUpperCase()))
   );
   if (memMatch && memMatch.mediaUrl) {
-    return memMatch.mediaUrl;
+    return {
+      mediaUrl: memMatch.mediaUrl,
+      ticketId: memMatch.ticketId || param,
+      namaPelapor: memMatch.namaPelapor || 'Masyarakat/Warga',
+      desa: memMatch.desa || 'Kec. Tulis',
+      jenisKejadian: memMatch.jenisKejadian || 'Aduan Kedaruratan',
+      deskripsi: memMatch.deskripsi || 'Sesuai formulir laporan SIPITUNG.',
+      createdAt: memMatch.createdAt || new Date().toISOString()
+    };
   }
 
-  // 2. Query Supabase with ultra-targeted light queries (selecting ONLY media_url columns)
+  // 2. Query Supabase with ultra-targeted light queries
   const sb = getSupabaseClient();
   if (!sb) return null;
 
@@ -345,15 +353,22 @@ async function getReportPhotoMediaUrl(ticketIdOrId: string): Promise<string | nu
       try {
         const { data, error } = await sb
           .from(table)
-          .select('media_url, mediaUrl, mediaurl')
-          .eq(col, param)
+          .select('*')
+          .ilike(col, param)
           .limit(1);
 
         if (!error && Array.isArray(data) && data.length > 0 && data[0]) {
-          const row = data[0];
-          const media = row.media_url || row.mediaUrl || row.mediaurl;
-          if (media && typeof media === 'string') {
-            return media;
+          const rec = fromSupabaseRecord(data[0]);
+          if (rec && rec.mediaUrl) {
+            return {
+              mediaUrl: rec.mediaUrl,
+              ticketId: rec.ticketId || param,
+              namaPelapor: rec.namaPelapor || 'Masyarakat/Warga',
+              desa: rec.desa || 'Kec. Tulis',
+              jenisKejadian: rec.jenisKejadian || 'Aduan Kedaruratan',
+              deskripsi: rec.deskripsi || 'Sesuai formulir laporan SIPITUNG.',
+              createdAt: rec.createdAt || new Date().toISOString()
+            };
           }
         }
       } catch (e) {
@@ -363,6 +378,11 @@ async function getReportPhotoMediaUrl(ticketIdOrId: string): Promise<string | nu
   }
 
   return null;
+}
+
+async function getReportPhotoMediaUrl(ticketIdOrId: string): Promise<string | null> {
+  const res = await getReportWithMedia(ticketIdOrId);
+  return res ? (res.mediaUrl || null) : null;
 }
 
 function generateSvgErrorBanner(message: string, ticketId: string) {
@@ -648,6 +668,7 @@ app.get(['/api/reports/:id', '/reports/:id'], (req: Request, res: Response) => {
 app.get(['/api/reports/:id/photo', '/reports/:id/photo', '/api/reports/photo', '/reports/photo'], async (req: Request, res: Response) => {
   try {
     const ticketIdParam = (req.params.id || (req.query.ticketId as string) || (req.query.ticket as string) || (req.query.id as string) || '').trim();
+    const isRaw = req.query.raw === 'true' || req.query.download === 'true' || (req.headers.accept && req.headers.accept.includes('image/'));
 
     if (!ticketIdParam) {
       res.setHeader('Content-Type', 'image/svg+xml');
@@ -655,45 +676,122 @@ app.get(['/api/reports/:id/photo', '/reports/:id/photo', '/api/reports/photo', '
       return;
     }
 
-    const mediaUrl = await getReportPhotoMediaUrl(ticketIdParam);
+    const reportData = await getReportWithMedia(ticketIdParam);
 
-    if (!mediaUrl) {
+    if (!reportData || !reportData.mediaUrl) {
       res.setHeader('Content-Type', 'image/svg+xml');
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.status(200).send(generateSvgErrorBanner('Foto Aduan Tidak Ditemukan di Database', ticketIdParam));
       return;
     }
 
-    // If mediaUrl is a Data URI (Base64)
-    if (typeof mediaUrl === 'string' && mediaUrl.startsWith('data:')) {
-      const mimeMatch = mediaUrl.match(/^data:([a-zA-Z0-9+\/.-]+);base64,/);
-      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-      const base64Data = mediaUrl.replace(/^data:[a-zA-Z0-9+\/.-]+;base64,/, '');
-      const imgBuffer = Buffer.from(base64Data, 'base64');
+    const mediaUrl = reportData.mediaUrl;
 
-      res.setHeader('Content-Type', mimeType);
-      res.setHeader('Content-Length', imgBuffer.length);
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      res.status(200).send(imgBuffer);
-      return;
-    }
-
-    // If mediaUrl is HTTP/HTTPS URL
+    // Handle HTTP/HTTPS URLs
     if (typeof mediaUrl === 'string' && (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://'))) {
       res.redirect(302, mediaUrl);
       return;
     }
 
-    // Fallback redirect if string
-    if (typeof mediaUrl === 'string' && mediaUrl.length > 0) {
-      res.redirect(302, mediaUrl);
+    // Handle Data URI / Base64
+    if (typeof mediaUrl === 'string' && mediaUrl.startsWith('data:')) {
+      const mimeMatch = mediaUrl.match(/^data:([a-zA-Z0-9+\/.-]+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+      const base64Data = mediaUrl.replace(/^data:[a-zA-Z0-9+\/.-]+;base64,/, '');
+
+      if (isRaw) {
+        const imgBuffer = Buffer.from(base64Data, 'base64');
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Content-Length', imgBuffer.length);
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.status(200).send(imgBuffer);
+        return;
+      }
+
+      const ticket = reportData.ticketId || ticketIdParam;
+      const pelapor = reportData.namaPelapor || 'Masyarakat/Warga';
+      const desa = reportData.desa || 'Kecamatan Tulis';
+      const deskripsi = reportData.deskripsi || 'Sesuai formulir laporan SIPITUNG.';
+
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.status(200).send(`
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dokumentasi Foto Aduan - ${ticket}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 16px; }
+    .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 16px; max-width: 640px; width: 100%; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); margin-top: 12px; }
+    .header { background: linear-gradient(135deg, #1e293b, #0f172a); border-bottom: 1px solid #334155; padding: 20px; text-align: center; }
+    .badge { display: inline-block; background-color: #dc2626; color: #ffffff; font-weight: 700; font-size: 12px; padding: 4px 12px; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+    .title { font-size: 20px; font-weight: 800; color: #f8fafc; line-height: 1.3; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: #94a3b8; }
+    .img-container { background-color: #020617; text-align: center; padding: 12px; display: flex; justify-content: center; align-items: center; min-height: 250px; }
+    .img-container img { max-width: 100%; max-height: 70vh; border-radius: 8px; object-fit: contain; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5); }
+    .info-body { padding: 20px; border-top: 1px solid #334155; }
+    .info-row { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 14px; border-bottom: 1px dashed #334155; padding-bottom: 8px; }
+    .info-label { color: #94a3b8; font-weight: 500; }
+    .info-value { color: #f8fafc; font-weight: 600; text-align: right; }
+    .desc-box { background-color: #0f172a; border-radius: 8px; padding: 12px; font-size: 13px; color: #cbd5e1; line-height: 1.5; margin-top: 12px; border: 1px solid #334155; }
+    .actions { padding: 16px 20px 24px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .btn { flex: 1; min-width: 140px; text-align: center; padding: 12px 16px; border-radius: 10px; font-weight: 600; font-size: 14px; text-decoration: none; cursor: pointer; transition: all 0.2s; border: none; }
+    .btn-primary { background-color: #2563eb; color: #ffffff; }
+    .btn-primary:hover { background-color: #1d4ed8; }
+    .btn-secondary { background-color: #334155; color: #f8fafc; }
+    .btn-secondary:hover { background-color: #475569; }
+    .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="badge">SIPITUNG KECAMATAN TULIS</div>
+      <h1 class="title">Foto Dokumentasi Kejadian</h1>
+      <p class="subtitle">Sistem Informasi Pengaduan &amp; Kedaruratan Trantibum</p>
+    </div>
+    <div class="img-container">
+      <img src="${mediaUrl}" alt="Foto Kejadian ${ticket}" />
+    </div>
+    <div class="info-body">
+      <div class="info-row">
+        <span class="info-label">Nomor Tiket</span>
+        <span class="info-value">${ticket}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Pelapor</span>
+        <span class="info-value">${pelapor}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Wilayah Desa</span>
+        <span class="info-value">Desa ${desa}</span>
+      </div>
+      <div class="desc-box">
+        <strong>Deskripsi Kejadian:</strong><br/>
+        ${deskripsi.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+      </div>
+    </div>
+    <div class="actions">
+      <a href="${mediaUrl}" download="Foto_Aduan_${ticket}.jpg" class="btn btn-primary">📥 Unduh Foto</a>
+      <a href="/api/reports/${ticket}/photo?raw=true" class="btn btn-secondary" target="_blank">🔗 Buka Gambar Mentah</a>
+    </div>
+  </div>
+  <div class="footer">
+    Posko Kedaruratan &amp; Trantibum Kecamatan Tulis, Kabupaten Batang &bull; Call Center 112
+  </div>
+</body>
+</html>
+      `.trim());
       return;
     }
 
     res.setHeader('Content-Type', 'image/svg+xml');
     res.status(200).send(generateSvgErrorBanner('Format Foto Tidak Valid', ticketIdParam));
   } catch (err: any) {
-    console.error('[Photo Route Error]', err);
+    console.error('[Photo Route Exception]', err);
     res.setHeader('Content-Type', 'image/svg+xml');
     res.status(200).send(generateSvgErrorBanner(`Gagal Memuat Foto: ${err.message || 'Error'}`, 'SIPITUNG'));
   }
