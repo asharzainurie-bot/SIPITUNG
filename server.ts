@@ -321,6 +321,67 @@ async function saveReportToSupabase(newReport: any): Promise<{ success: boolean;
   return { success: false, error: lastErrMsg };
 }
 
+async function getReportPhotoMediaUrl(ticketIdOrId: string): Promise<string | null> {
+  const param = (ticketIdOrId || '').trim();
+  if (!param) return null;
+
+  // 1. Check in-memory reports store
+  const memMatch = reportsStore.find(
+    r => r && (r.id === param || (r.ticketId && String(r.ticketId).toUpperCase() === param.toUpperCase()))
+  );
+  if (memMatch && memMatch.mediaUrl) {
+    return memMatch.mediaUrl;
+  }
+
+  // 2. Query Supabase with ultra-targeted light queries (selecting ONLY media_url columns)
+  const sb = getSupabaseClient();
+  if (!sb) return null;
+
+  const tables = ['sipitung_reports', 'reports'];
+  const columnsToTry = ['ticket_id', 'ticketId', 'ticketid', 'id'];
+
+  for (const table of tables) {
+    for (const col of columnsToTry) {
+      try {
+        const { data, error } = await sb
+          .from(table)
+          .select('media_url, mediaUrl, mediaurl')
+          .eq(col, param)
+          .limit(1);
+
+        if (!error && Array.isArray(data) && data.length > 0 && data[0]) {
+          const row = data[0];
+          const media = row.media_url || row.mediaUrl || row.mediaurl;
+          if (media && typeof media === 'string') {
+            return media;
+          }
+        }
+      } catch (e) {
+        // Ignore single query errors and try next candidate column/table
+      }
+    }
+  }
+
+  return null;
+}
+
+function generateSvgErrorBanner(message: string, ticketId: string) {
+  const safeMsg = (message || 'Foto Tidak Ditemukan').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeTicket = (ticketId || 'SIPITUNG').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="600" height="350" viewBox="0 0 600 350">
+      <rect width="100%" height="100%" fill="#0f172a"/>
+      <rect x="20" y="20" width="560" height="310" rx="16" fill="#1e293b" stroke="#334155" stroke-width="2"/>
+      <circle cx="300" cy="115" r="38" fill="#334155"/>
+      <path d="M285 115 C285 105 315 105 315 115 C315 130 292 130 292 145" stroke="#f43f5e" stroke-width="5" fill="none" stroke-linecap="round"/>
+      <circle cx="292" cy="165" r="3.5" fill="#f43f5e"/>
+      <text x="50%" y="220" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="18" fill="#f8fafc" font-weight="bold">${safeMsg}</text>
+      <text x="50%" y="255" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#94a3b8">Nomor Tiket: ${safeTicket}</text>
+      <text x="50%" y="285" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#64748b">Posko Kedaruratan &amp; Trantibum Kecamatan Tulis Batang</text>
+    </svg>
+  `.trim();
+}
+
 async function fetchReportsFromSupabase(): Promise<{ reports: any[]; table: string } | null> {
   const sb = getSupabaseClient();
   if (!sb) return null;
@@ -328,7 +389,7 @@ async function fetchReportsFromSupabase(): Promise<{ reports: any[]; table: stri
   const tables = ['reports', 'sipitung_reports'];
   for (const table of tables) {
     try {
-      const { data, error } = await sb.from(table).select('*');
+      const { data, error } = await sb.from(table).select('*').limit(100);
       if (!error && Array.isArray(data) && data.length > 0) {
         return {
           reports: data.map(fromSupabaseRecord),
@@ -584,89 +645,57 @@ app.get(['/api/reports/:id', '/reports/:id'], (req: Request, res: Response) => {
 });
 
 // GET Report Photo Directly (For WhatsApp Link Viewing)
-app.get(['/api/reports/:id/photo', '/reports/:id/photo'], async (req: Request, res: Response) => {
+app.get(['/api/reports/:id/photo', '/reports/:id/photo', '/api/reports/photo', '/reports/photo'], async (req: Request, res: Response) => {
   try {
-    const param = (req.params.id || '').trim();
-    let found = reportsStore.find(
-      r => r && (r.id === param || (r.ticketId && String(r.ticketId).toUpperCase() === param.toUpperCase()))
-    );
+    const ticketIdParam = (req.params.id || (req.query.ticketId as string) || (req.query.ticket as string) || (req.query.id as string) || '').trim();
 
-    // 1. Try fetching all reports from Supabase if memory is empty
-    if (!found || !found.mediaUrl) {
-      const sbResult = await fetchReportsFromSupabase();
-      if (sbResult && sbResult.reports.length > 0) {
-        reportsStore = sbResult.reports;
-        found = reportsStore.find(
-          r => r && (r.id === param || (r.ticketId && String(r.ticketId).toUpperCase() === param.toUpperCase()))
-        );
-      }
-    }
-
-    // 2. Target query directly on Supabase across all column variants
-    if (!found || !found.mediaUrl) {
-      const sb = getSupabaseClient();
-      if (sb) {
-        for (const tbl of ['reports', 'sipitung_reports']) {
-          for (const col of ['ticketId', 'ticket_id', 'ticketid', 'id']) {
-            try {
-              const { data } = await sb.from(tbl).select('*').ilike(col, param).limit(1);
-              if (data && data.length > 0 && data[0]) {
-                found = fromSupabaseRecord(data[0]);
-                break;
-              }
-            } catch (e) {
-              // continue
-            }
-          }
-          if (found && found.mediaUrl) break;
-        }
-      }
-    }
-
-    if (!found || !found.mediaUrl) {
-      // Return a clean graphic image response for missing photo
+    if (!ticketIdParam) {
       res.setHeader('Content-Type', 'image/svg+xml');
-      res.status(200).send(`
-        <svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
-          <rect width="100%" height="100%" fill="#1e293b"/>
-          <circle cx="300" cy="160" r="45" fill="#334155"/>
-          <path d="M280 160 C280 150 320 150 320 160 C320 180 290 180 290 195" stroke="#94a3b8" stroke-width="6" fill="none" stroke-linecap="round"/>
-          <circle cx="290" cy="215" r="4" fill="#94a3b8"/>
-          <text x="50%" y="270" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="20" fill="#f8fafc" font-weight="bold">FOTO ADUAN TIDAK DITEMUKAN</text>
-          <text x="50%" y="305" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#94a3b8">Nomor Tiket: ${param || 'SIPITUNG'}</text>
-          <text x="50%" y="335" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#64748b">Sistem Kedaruratan Kecamatan Tulis Batang</text>
-        </svg>
-      `.trim());
+      res.status(200).send(generateSvgErrorBanner('ID Tiket Tidak Diberikan', 'SIPITUNG'));
       return;
     }
 
-    const mediaUrl = found.mediaUrl;
+    const mediaUrl = await getReportPhotoMediaUrl(ticketIdParam);
 
-    if (mediaUrl.startsWith('data:image/') || mediaUrl.startsWith('data:video/') || mediaUrl.startsWith('data:application/')) {
-      // Parse base64 image and serve as binary image file
+    if (!mediaUrl) {
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.status(200).send(generateSvgErrorBanner('Foto Aduan Tidak Ditemukan di Database', ticketIdParam));
+      return;
+    }
+
+    // If mediaUrl is a Data URI (Base64)
+    if (typeof mediaUrl === 'string' && mediaUrl.startsWith('data:')) {
       const mimeMatch = mediaUrl.match(/^data:([a-zA-Z0-9+\/.-]+);base64,/);
       const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
       const base64Data = mediaUrl.replace(/^data:[a-zA-Z0-9+\/.-]+;base64,/, '');
       const imgBuffer = Buffer.from(base64Data, 'base64');
 
       res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Length', imgBuffer.length);
       res.setHeader('Cache-Control', 'public, max-age=86400');
-      res.send(imgBuffer);
-    } else if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
-      res.redirect(302, mediaUrl);
-    } else {
-      res.redirect(302, mediaUrl);
+      res.status(200).send(imgBuffer);
+      return;
     }
+
+    // If mediaUrl is HTTP/HTTPS URL
+    if (typeof mediaUrl === 'string' && (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://'))) {
+      res.redirect(302, mediaUrl);
+      return;
+    }
+
+    // Fallback redirect if string
+    if (typeof mediaUrl === 'string' && mediaUrl.length > 0) {
+      res.redirect(302, mediaUrl);
+      return;
+    }
+
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.status(200).send(generateSvgErrorBanner('Format Foto Tidak Valid', ticketIdParam));
   } catch (err: any) {
     console.error('[Photo Route Error]', err);
     res.setHeader('Content-Type', 'image/svg+xml');
-    res.status(200).send(`
-      <svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
-        <rect width="100%" height="100%" fill="#0f172a"/>
-        <text x="50%" y="190" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="22" fill="#ef4444" font-weight="bold">GAGAL MEMUAT FOTO ADUAN</text>
-        <text x="50%" y="235" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#94a3b8">${err.message || 'Error Server'}</text>
-      </svg>
-    `.trim());
+    res.status(200).send(generateSvgErrorBanner(`Gagal Memuat Foto: ${err.message || 'Error'}`, 'SIPITUNG'));
   }
 });
 
@@ -1055,6 +1084,8 @@ async function startServer() {
 
 export default app;
 
-if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+const isVercel = !!(process.env.VERCEL || process.env.VERCEL_ENV || process.env.NOW_BUILD || process.env.NOW_REGION);
+
+if (!isVercel && process.env.NODE_ENV !== 'test') {
   startServer();
 }
