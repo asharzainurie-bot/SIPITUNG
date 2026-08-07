@@ -341,38 +341,58 @@ async function getReportWithMedia(ticketIdOrId: string): Promise<{ mediaUrl?: st
     };
   }
 
-  // 2. Query Supabase with ultra-targeted light queries
+  // 2. Query Supabase with ultra-targeted queries
   const sb = getSupabaseClient();
   if (!sb) return null;
 
   const tables = ['sipitung_reports', 'reports'];
-  const columnsToTry = ['ticket_id', 'ticketId', 'ticketid', 'id'];
 
   for (const table of tables) {
-    for (const col of columnsToTry) {
-      try {
-        const { data, error } = await sb
-          .from(table)
-          .select('*')
-          .ilike(col, param)
-          .limit(1);
+    // Attempt single OR query first
+    try {
+      const { data, error } = await sb
+        .from(table)
+        .select('*')
+        .or(`ticket_id.ilike.${param},ticketId.ilike.${param},ticketid.ilike.${param},id.ilike.${param}`)
+        .limit(1);
 
-        if (!error && Array.isArray(data) && data.length > 0 && data[0]) {
-          const rec = fromSupabaseRecord(data[0]);
-          if (rec && rec.mediaUrl) {
-            return {
-              mediaUrl: rec.mediaUrl,
-              ticketId: rec.ticketId || param,
-              namaPelapor: rec.namaPelapor || 'Masyarakat/Warga',
-              desa: rec.desa || 'Kec. Tulis',
-              jenisKejadian: rec.jenisKejadian || 'Aduan Kedaruratan',
-              deskripsi: rec.deskripsi || 'Sesuai formulir laporan SIPITUNG.',
-              createdAt: rec.createdAt || new Date().toISOString()
-            };
-          }
+      if (!error && Array.isArray(data) && data.length > 0 && data[0]) {
+        const rec = fromSupabaseRecord(data[0]);
+        if (rec && rec.mediaUrl) {
+          return {
+            mediaUrl: rec.mediaUrl,
+            ticketId: rec.ticketId || param,
+            namaPelapor: rec.namaPelapor || 'Masyarakat/Warga',
+            desa: rec.desa || 'Kec. Tulis',
+            jenisKejadian: rec.jenisKejadian || 'Aduan Kedaruratan',
+            deskripsi: rec.deskripsi || 'Sesuai formulir laporan SIPITUNG.',
+            createdAt: rec.createdAt || new Date().toISOString()
+          };
         }
-      } catch (e) {
-        // Ignore single query errors and try next candidate column/table
+      }
+    } catch (e) {
+      // Fallback: try individual columns sequentially if OR query syntax fails
+      const columnsToTry = ['ticket_id', 'ticketId', 'id'];
+      for (const col of columnsToTry) {
+        try {
+          const { data } = await sb.from(table).select('*').ilike(col, param).limit(1);
+          if (Array.isArray(data) && data.length > 0 && data[0]) {
+            const rec = fromSupabaseRecord(data[0]);
+            if (rec && rec.mediaUrl) {
+              return {
+                mediaUrl: rec.mediaUrl,
+                ticketId: rec.ticketId || param,
+                namaPelapor: rec.namaPelapor || 'Masyarakat/Warga',
+                desa: rec.desa || 'Kec. Tulis',
+                jenisKejadian: rec.jenisKejadian || 'Aduan Kedaruratan',
+                deskripsi: rec.deskripsi || 'Sesuai formulir laporan SIPITUNG.',
+                createdAt: rec.createdAt || new Date().toISOString()
+              };
+            }
+          }
+        } catch (colErr) {
+          // continue
+        }
       }
     }
   }
@@ -712,6 +732,7 @@ app.get(['/api/reports/:id/photo', '/reports/:id/photo', '/api/reports/photo', '
       const pelapor = reportData.namaPelapor || 'Masyarakat/Warga';
       const desa = reportData.desa || 'Kecamatan Tulis';
       const deskripsi = reportData.deskripsi || 'Sesuai formulir laporan SIPITUNG.';
+      const rawImgUrl = `/api/reports/${encodeURIComponent(ticket)}/photo?raw=true`;
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -754,7 +775,7 @@ app.get(['/api/reports/:id/photo', '/reports/:id/photo', '/api/reports/photo', '
       <p class="subtitle">Sistem Informasi Pengaduan &amp; Kedaruratan Trantibum</p>
     </div>
     <div class="img-container">
-      <img src="${mediaUrl}" alt="Foto Kejadian ${ticket}" />
+      <img src="${rawImgUrl}" alt="Foto Kejadian ${ticket}" />
     </div>
     <div class="info-body">
       <div class="info-row">
@@ -775,8 +796,8 @@ app.get(['/api/reports/:id/photo', '/reports/:id/photo', '/api/reports/photo', '
       </div>
     </div>
     <div class="actions">
-      <a href="${mediaUrl}" download="Foto_Aduan_${ticket}.jpg" class="btn btn-primary">📥 Unduh Foto</a>
-      <a href="/api/reports/${ticket}/photo?raw=true" class="btn btn-secondary" target="_blank">🔗 Buka Gambar Mentah</a>
+      <a href="${rawImgUrl}" download="Foto_Aduan_${ticket}.jpg" class="btn btn-primary">📥 Unduh Foto</a>
+      <a href="${rawImgUrl}" class="btn btn-secondary" target="_blank">🔗 Buka Gambar Mentah</a>
     </div>
   </div>
   <div class="footer">
