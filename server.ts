@@ -398,6 +398,43 @@ async function getReportPhotoMediaUrl(ticketIdOrId: string): Promise<string | nu
   return res ? (res.mediaUrl || null) : null;
 }
 
+async function getReportFullDetails(ticketIdOrId: string): Promise<any | null> {
+  const param = (ticketIdOrId || '').trim();
+  if (!param) return null;
+
+  // 1. Check in-memory reports store
+  const memMatch = reportsStore.find(
+    r => r && (r.id === param || (r.ticketId && String(r.ticketId).toUpperCase() === param.toUpperCase()))
+  );
+  if (memMatch) return memMatch;
+
+  // 2. Query Supabase
+  const sb = getSupabaseClient();
+  if (!sb) return null;
+
+  const tables = ['sipitung_reports', 'reports'];
+  const columnsToTry = ['ticket_id', 'ticketId', 'ticketid', 'id'];
+
+  for (const table of tables) {
+    for (const col of columnsToTry) {
+      try {
+        const { data: eqData } = await sb.from(table).select('*').eq(col, param).limit(1);
+        if (Array.isArray(eqData) && eqData.length > 0 && eqData[0]) {
+          return fromSupabaseRecord(eqData[0]);
+        }
+        const { data: ilikeData } = await sb.from(table).select('*').ilike(col, param).limit(1);
+        if (Array.isArray(ilikeData) && ilikeData.length > 0 && ilikeData[0]) {
+          return fromSupabaseRecord(ilikeData[0]);
+        }
+      } catch (e) {
+        // continue
+      }
+    }
+  }
+
+  return null;
+}
+
 function generateSvgErrorBanner(message: string, ticketId: string) {
   const safeMsg = (message || 'Foto Tidak Ditemukan').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const safeTicket = (ticketId || 'SIPITUNG').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -808,6 +845,206 @@ app.get(['/api/reports/:id/photo', '/reports/:id/photo', '/api/reports/photo', '
     console.error('[Photo Route Exception]', err);
     res.setHeader('Content-Type', 'image/svg+xml');
     res.status(200).send(generateSvgErrorBanner(`Gagal Memuat Foto: ${err.message || 'Error'}`, 'SIPITUNG'));
+  }
+});
+
+// GET Tanda Bukti Laporan (PDF Printable) Route
+app.get(['/api/reports/:id/pdf', '/reports/:id/pdf'], async (req: Request, res: Response) => {
+  try {
+    const ticketIdParam = (req.params.id || (req.query.ticketId as string) || (req.query.id as string) || '').trim();
+
+    if (!ticketIdParam) {
+      res.status(400).send('Nomor Tiket tidak ditemukan.');
+      return;
+    }
+
+    const report = await getReportFullDetails(ticketIdParam);
+    const ticket = report?.ticketId || ticketIdParam;
+    const pelapor = report?.namaPelapor || 'Masyarakat/Warga';
+    const wa = report?.noWhatsapp || '-';
+    const desa = report?.desa || 'Kecamatan Tulis';
+    const alamat = report?.alamat || 'Kecamatan Tulis, Kab. Batang';
+    const lat = report?.latitude || -6.9536;
+    const lng = report?.longitude || 109.8168;
+    const jenis = report?.jenisKejadian || 'Aduan Kedaruratan';
+    const kategori = (report?.kategori || 'bencana').toUpperCase();
+    const waktu = report?.waktuKejadian ? new Date(report.waktuKejadian).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' }) : new Date().toLocaleString('id-ID');
+    const deskripsi = report?.deskripsi || 'Sesuai formulir pengaduan aplikasi SIPITUNG.';
+    const photoUrl = `/api/reports/${encodeURIComponent(ticket)}/photo?raw=true`;
+
+    const korban = report?.korban || {};
+    const meninggal = korban.meninggal || 0;
+    const lukaBerat = korban.lukaBerat || 0;
+    const lukaRingan = korban.lukaRingan || 0;
+    const mengungsi = korban.mengungsi || 0;
+    const rumahRusak = korban.rumahRusak || 0;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.status(200).send(`
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tanda_Bukti_Laporan_${ticket}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background-color: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; padding: 24px; min-height: 100vh; }
+    .print-container { max-width: 800px; margin: 0 auto; background: #ffffff; padding: 32px; border-radius: 12px; border: 2px solid #cbd5e1; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+    
+    /* Kop Surat Official */
+    .kop-header { display: flex; align-items: center; border-bottom: 3px double #0284c7; padding-bottom: 16px; margin-bottom: 24px; gap: 16px; }
+    .kop-logo { width: 70px; height: 70px; background: #0284c7; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 900; font-size: 24px; }
+    .kop-text { flex: 1; text-align: center; }
+    .kop-text h3 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #475569; margin-bottom: 2px; }
+    .kop-text h2 { font-size: 18px; text-transform: uppercase; font-weight: 800; color: #0f172a; margin-bottom: 2px; }
+    .kop-text p { font-size: 11px; color: #64748b; }
+
+    /* Title & Badge */
+    .doc-title { text-align: center; margin-bottom: 24px; }
+    .doc-title h1 { font-size: 20px; font-weight: 800; color: #0284c7; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .badge-ticket { display: inline-block; background-color: #0284c7; color: #ffffff; padding: 6px 16px; border-radius: 9999px; font-weight: 800; font-size: 14px; letter-spacing: 1px; }
+
+    /* Tables */
+    .info-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 13px; }
+    .info-table th { background-color: #f1f5f9; text-align: left; padding: 8px 12px; font-weight: 700; color: #334155; border: 1px solid #cbd5e1; }
+    .info-table td { padding: 8px 12px; border: 1px solid #cbd5e1; color: #0f172a; }
+    .info-table td.label { font-weight: 600; width: 35%; background-color: #f8fafc; color: #475569; }
+
+    /* Boxes */
+    .box-section { border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; margin-bottom: 20px; background: #f8fafc; }
+    .box-title { font-size: 13px; font-weight: 700; color: #0369a1; text-transform: uppercase; margin-bottom: 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
+
+    /* Photo */
+    .photo-frame { text-align: center; margin-top: 12px; }
+    .photo-frame img { max-width: 100%; max-height: 280px; border-radius: 8px; border: 1px solid #cbd5e1; object-fit: contain; }
+
+    /* Action Buttons */
+    .no-print-bar { display: flex; justify-content: center; gap: 12px; margin-bottom: 20px; }
+    .btn { padding: 10px 20px; border-radius: 8px; font-weight: 700; font-size: 14px; border: none; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; transition: all 0.2s; }
+    .btn-print { background-color: #0284c7; color: #ffffff; }
+    .btn-print:hover { background-color: #0369a1; }
+    .btn-close { background-color: #64748b; color: #ffffff; }
+    .btn-close:hover { background-color: #475569; }
+
+    .footer-stamp { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 40px; padding-top: 16px; border-top: 1px dashed #cbd5e1; font-size: 12px; color: #64748b; }
+    .stamp-box { text-align: center; }
+
+    /* Print media optimization */
+    @media print {
+      body { background: #fff; padding: 0; }
+      .print-container { border: none; box-shadow: none; padding: 0; max-width: 100%; }
+      .no-print-bar { display: none !important; }
+      @page { size: A4; margin: 15mm; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="no-print-bar">
+    <button onclick="window.print()" class="btn btn-print">🖨️ Cetak / Simpan PDF</button>
+    <a href="/" class="btn btn-close">🏠 Kembali ke Aplikasi</a>
+  </div>
+
+  <div class="print-container">
+    <div class="kop-header">
+      <div class="kop-logo">SPT</div>
+      <div class="kop-text">
+        <h3>Pemerintah Kabupaten Batang &bull; Kecamatan Tulis</h3>
+        <h2>Posko Kedaruratan &amp; Trantibum SIPITUNG</h2>
+        <p>Jl. Raya Tulis No. 1, Kecamatan Tulis, Kabupaten Batang, Jawa Tengah &bull; Call Center: 112</p>
+      </div>
+    </div>
+
+    <div class="doc-title">
+      <h1>Tanda Bukti Registrasi Aduan</h1>
+      <div class="badge-ticket">NOMOR TIKET: ${ticket}</div>
+    </div>
+
+    <table class="info-table">
+      <tr>
+        <td class="label">Kategori Laporan</td>
+        <td><strong>${kategori} (${jenis})</strong></td>
+      </tr>
+      <tr>
+        <td class="label">Nama Pelapor</td>
+        <td>${pelapor}</td>
+      </tr>
+      <tr>
+        <td class="label">Nomor WhatsApp Pelapor</td>
+        <td>${wa}</td>
+      </tr>
+      <tr>
+        <td class="label">Wilayah Desa</td>
+        <td>Desa ${desa}, Kec. Tulis</td>
+      </tr>
+      <tr>
+        <td class="label">Alamat / Lokasi Detail</td>
+        <td>${alamat}</td>
+      </tr>
+      <tr>
+        <td class="label">Koordinat GPS</td>
+        <td>${lat}, ${lng} (<a href="https://maps.google.com/?q=${lat},${lng}" target="_blank">Lihat Peta Google Maps</a>)</td>
+      </tr>
+      <tr>
+        <td class="label">Waktu Kejadian</td>
+        <td>${waktu}</td>
+      </tr>
+    </table>
+
+    <div class="box-section">
+      <div class="box-title">Estimasi Korban &amp; Dampak Kejadian</div>
+      <table class="info-table" style="margin-bottom:0;">
+        <tr>
+          <td>Meninggal: <strong>${meninggal} Jiwa</strong></td>
+          <td>Luka Berat: <strong>${lukaBerat} Jiwa</strong></td>
+          <td>Luka Ringan: <strong>${lukaRingan} Jiwa</strong></td>
+        </tr>
+        <tr>
+          <td>Mengungsi: <strong>${mengungsi} Jiwa</strong></td>
+          <td colspan="2">Rumah/Fasilitas Rusak: <strong>${rumahRusak} Unit</strong></td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="box-section">
+      <div class="box-title">Kronologi &amp; Deskripsi Laporan</div>
+      <p style="font-size: 13px; line-height: 1.6; color: #334155; white-space: pre-wrap;">${deskripsi.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>
+    </div>
+
+    <div class="box-section">
+      <div class="box-title">Lampiran Dokumentasi Foto Lapangan</div>
+      <div class="photo-frame">
+        <img src="${photoUrl}" alt="Foto Lapangan ${ticket}" onError="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'300\' height=\'150\'><rect width=\'100%\' height=\'100%\' fill=\'%23f1f5f9\'/><text x=\'50%\' y=\'50%\' dominant-baseline=\'middle\' text-anchor=\'middle\' fill=\'%2394a3b8\'>Foto Lapangan Lampiran</text></svg>'" />
+      </div>
+    </div>
+
+    <div class="footer-stamp">
+      <div>
+        <p>SIPITUNG Kec. Tulis - Batang</p>
+        <p>Dicetak pada: ${new Date().toLocaleString('id-ID')}</p>
+      </div>
+      <div class="stamp-box">
+        <p>Petugas Posko Kedaruratan,</p>
+        <br/><br/>
+        <p><strong>( Tim Trantibum Kec. Tulis )</strong></p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Auto-trigger print prompt if user opened directly via print parameter
+    if (window.location.search.includes('print=true')) {
+      window.addEventListener('load', () => window.print());
+    }
+  </script>
+</body>
+</html>
+    `.trim());
+  } catch (err: any) {
+    console.error('[PDF Route Exception]', err);
+    res.status(500).send('Gagal membuat Tanda Bukti Laporan.');
   }
 });
 
