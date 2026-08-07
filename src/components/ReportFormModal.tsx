@@ -91,15 +91,70 @@ export const ReportFormModal: React.FC<ReportFormModalProps> = ({ onReportSubmit
     setIsWebcamOpen(false);
   };
 
+  // Helper to compress and downscale uploaded photo to keep payload small & fast (< 250KB)
+  const compressAndResizeImage = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const MAX_DIM = 1200;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > MAX_DIM || height > MAX_DIM) {
+            if (width > height) {
+              height = Math.round((height * MAX_DIM) / width);
+              width = MAX_DIM;
+            } else {
+              width = Math.round((width * MAX_DIM) / height);
+              height = MAX_DIM;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.75);
+            resolve(compressedDataUrl);
+          } else {
+            resolve(event.target?.result as string || '');
+          }
+        };
+        img.onerror = () => resolve(event.target?.result as string || '');
+        img.src = event.target?.result as string || '';
+      };
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(file);
+    });
+  };
+
   const captureWebcamPhoto = () => {
     if (!videoRef.current) return;
     const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth || 640;
-    canvas.height = videoRef.current.videoHeight || 480;
+    const vw = videoRef.current.videoWidth || 640;
+    const vh = videoRef.current.videoHeight || 480;
+    const MAX_DIM = 1000;
+    let width = vw;
+    let height = vh;
+    if (width > MAX_DIM || height > MAX_DIM) {
+      if (width > height) {
+        height = Math.round((height * MAX_DIM) / width);
+        width = MAX_DIM;
+      } else {
+        width = Math.round((width * MAX_DIM) / height);
+        height = MAX_DIM;
+      }
+    }
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      ctx.drawImage(videoRef.current, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
       setMediaUrl(dataUrl);
       setMediaType('image');
       stopWebcam();
@@ -279,16 +334,32 @@ ${deskripsi || 'Sesuai formulir laporan aplikasi SIPITUNG.'}`;
     return `https://wa.me/${cleanNum}?text=${encodeURIComponent(text)}`;
   };
 
-  // Image Upload Handling
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Image Upload Handling with Automatic Client Compression
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setMediaUrl(reader.result as string);
-        setMediaType(file.type.startsWith('video') ? 'video' : 'image');
-      };
-      reader.readAsDataURL(file);
+      if (file.type.startsWith('image/')) {
+        try {
+          const compressedUrl = await compressAndResizeImage(file);
+          setMediaUrl(compressedUrl);
+          setMediaType('image');
+        } catch (err) {
+          console.error('Failed image compression, using fallback:', err);
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            setMediaUrl(reader.result as string);
+            setMediaType('image');
+          };
+          reader.readAsDataURL(file);
+        }
+      } else {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setMediaUrl(reader.result as string);
+          setMediaType(file.type.startsWith('video') ? 'video' : 'image');
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 
