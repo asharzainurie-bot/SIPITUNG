@@ -207,6 +207,7 @@ function toLowerRecord(r: any) {
 }
 
 function fromSupabaseRecord(r: any) {
+  if (!r) return null;
   let korbanObj = r.korban;
   if (typeof r.korban === 'string') {
     try {
@@ -216,8 +217,8 @@ function fromSupabaseRecord(r: any) {
     }
   }
   return {
-    id: String(r.id),
-    ticketId: r.ticketId || r.ticket_id || r.ticketid || r.id,
+    id: String(r.id || ''),
+    ticketId: r.ticketId || r.ticket_id || r.ticketid || r.id || '',
     namaPelapor: r.namaPelapor || r.nama_pelapor || r.namapelapor || 'Warga Tulis',
     noWhatsapp: r.noWhatsapp || r.no_whatsapp || r.nowhatsapp || '',
     desa: r.desa || 'Tulis',
@@ -735,12 +736,17 @@ app.get(['/api/reports/:id/photo', '/reports/:id/photo', '/api/reports/photo', '
       return;
     }
 
-    const mediaUrl = reportData.mediaUrl;
+    let mediaUrl = reportData.mediaUrl;
 
     // Handle HTTP/HTTPS URLs
     if (typeof mediaUrl === 'string' && (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://'))) {
       res.redirect(302, mediaUrl);
       return;
+    }
+
+    // Normalize base64 string if data: prefix is missing
+    if (typeof mediaUrl === 'string' && !mediaUrl.startsWith('data:') && mediaUrl.length > 50) {
+      mediaUrl = `data:image/jpeg;base64,${mediaUrl.trim()}`;
     }
 
     // Handle Data URI / Base64
