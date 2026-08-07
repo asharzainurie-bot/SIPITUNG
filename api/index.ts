@@ -1,7 +1,7 @@
 import app from '../server';
 
 export default function handler(req: any, res: any) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     try {
       // Add global CORS headers for Vercel Serverless Function responses
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -15,30 +15,37 @@ export default function handler(req: any, res: any) {
       }
 
       // Standardize URL path for Express routing when rewritten by Vercel
-      if (req.query && req.query.path) {
-        const pathStr = Array.isArray(req.query.path) ? req.query.path.join('/') : String(req.query.path);
-        delete req.query.path;
+      if (req.url) {
+        let cleanUrl = req.url;
 
-        // Reconstruct remaining query parameters
-        const queryParams = new URLSearchParams();
-        for (const [key, val] of Object.entries(req.query)) {
-          if (val !== undefined) {
-            if (Array.isArray(val)) {
-              val.forEach(v => queryParams.append(key, String(v)));
-            } else {
-              queryParams.append(key, String(val));
+        // Strip /api/index.ts or /api/index or /api/index/ if present
+        cleanUrl = cleanUrl.replace(/^\/api\/index(\.ts)?\/?/i, '/');
+
+        // Ensure path starts with /api
+        if (!cleanUrl.startsWith('/api/') && cleanUrl !== '/api') {
+          cleanUrl = '/api' + (cleanUrl.startsWith('/') ? '' : '/') + cleanUrl;
+        }
+
+        // Handle case where query path parameter was provided
+        if (req.query && req.query.path) {
+          const pathStr = Array.isArray(req.query.path) ? req.query.path.join('/') : String(req.query.path);
+          if (pathStr && !cleanUrl.includes(pathStr)) {
+            const queryParams = new URLSearchParams();
+            for (const [key, val] of Object.entries(req.query)) {
+              if (key !== 'path' && val !== undefined) {
+                if (Array.isArray(val)) {
+                  val.forEach(v => queryParams.append(key, String(v)));
+                } else {
+                  queryParams.append(key, String(val));
+                }
+              }
             }
+            const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
+            cleanUrl = `/api/${pathStr.replace(/^\/+/, '')}${queryString}`;
           }
         }
-        const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
-        req.url = `/api/${pathStr.replace(/^\/+/, '')}${queryString}`;
-      } else if (req.url) {
-        if (req.url.startsWith('/api/index')) {
-          const rawPath = req.url.replace('/api/index', '');
-          req.url = rawPath.startsWith('/') ? `/api${rawPath}` : `/api/${rawPath}`;
-        } else if (!req.url.startsWith('/api/') && req.url !== '/api') {
-          req.url = '/api' + (req.url.startsWith('/') ? '' : '/') + req.url;
-        }
+
+        req.url = cleanUrl;
       }
 
       res.on('finish', () => resolve(true));
@@ -54,7 +61,8 @@ export default function handler(req: any, res: any) {
       if (!res.headersSent) {
         res.status(500).json({
           success: false,
-          error: err.message || 'Internal Server Error'
+          error: 'Serverless execution error',
+          message: err?.message || String(err)
         });
       }
       resolve(false);
