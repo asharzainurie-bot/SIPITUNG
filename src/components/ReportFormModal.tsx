@@ -301,11 +301,13 @@ export const ReportFormModal: React.FC<ReportFormModalProps> = ({ onReportSubmit
     let fotoStatusText = 'Tidak ada foto diunggah.';
     if (mediaUrl) {
       if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
-        fotoStatusText = `📸 Link Tautan Foto Kejadian: ${mediaUrl}`;
+        fotoStatusText = `📸 *Link Tautan Foto Kejadian:* ${mediaUrl}`;
       } else {
-        fotoStatusText = `📸 Link Tautan Foto Kejadian: ${window.location.origin}/api/reports/${ticketId}/photo`;
+        fotoStatusText = `📸 *Link Tautan Foto Kejadian:* ${window.location.origin}/api/reports/${ticketId}/photo`;
       }
     }
+
+    const pdfStatusText = `📄 *Tanda Bukti Laporan (PDF/Cetak):* ${window.location.origin}/api/reports/${ticketId}/pdf`;
 
     const text = `🚨 *LAPORAN ADUAN KEDARURATAN (SIPITUNG KEC. TULIS BATANG)* 🚨
 
@@ -325,7 +327,8 @@ export const ReportFormModal: React.FC<ReportFormModalProps> = ({ onReportSubmit
 - Mengungsi: ${mengungsi} Jiwa
 - Rumah Rusak: ${rumahRusak} Unit
 
-*Foto/Dokumentasi Lapangan:*
+*Dokumen & Bukti Laporan:*
+${pdfStatusText}
 ${fotoStatusText}
 
 *Deskripsi Kronologi:*
@@ -644,6 +647,14 @@ ${deskripsi || 'Sesuai formulir laporan aplikasi SIPITUNG.'}`;
             </div>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
+              <a
+                href={`/api/reports/${submittedTicket}/pdf?print=true`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 text-white px-6 py-3 rounded-xl font-bold text-xs uppercase shadow-md transition flex items-center justify-center space-x-2"
+              >
+                <span>📄 Cetak / Download Tanda Bukti (PDF)</span>
+              </a>
               <button
                 onClick={() => onTrackTicket(submittedTicket)}
                 className="w-full sm:w-auto bg-red-600 hover:bg-red-500 text-white px-6 py-3 rounded-xl font-bold text-xs uppercase shadow-lg transition"
