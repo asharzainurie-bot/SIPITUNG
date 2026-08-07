@@ -14,9 +14,31 @@ export default function handler(req: any, res: any) {
         return;
       }
 
-      // Standardize URL path for Express routing
-      if (req.url && !req.url.startsWith('/api/') && req.url !== '/api') {
-        req.url = '/api' + (req.url.startsWith('/') ? '' : '/') + req.url;
+      // Standardize URL path for Express routing when rewritten by Vercel
+      if (req.query && req.query.path) {
+        const pathStr = Array.isArray(req.query.path) ? req.query.path.join('/') : String(req.query.path);
+        delete req.query.path;
+
+        // Reconstruct remaining query parameters
+        const queryParams = new URLSearchParams();
+        for (const [key, val] of Object.entries(req.query)) {
+          if (val !== undefined) {
+            if (Array.isArray(val)) {
+              val.forEach(v => queryParams.append(key, String(v)));
+            } else {
+              queryParams.append(key, String(val));
+            }
+          }
+        }
+        const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
+        req.url = `/api/${pathStr.replace(/^\/+/, '')}${queryString}`;
+      } else if (req.url) {
+        if (req.url.startsWith('/api/index')) {
+          const rawPath = req.url.replace('/api/index', '');
+          req.url = rawPath.startsWith('/') ? `/api${rawPath}` : `/api/${rawPath}`;
+        } else if (!req.url.startsWith('/api/') && req.url !== '/api') {
+          req.url = '/api' + (req.url.startsWith('/') ? '' : '/') + req.url;
+        }
       }
 
       res.on('finish', () => resolve(true));
