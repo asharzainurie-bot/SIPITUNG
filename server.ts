@@ -341,58 +341,51 @@ async function getReportWithMedia(ticketIdOrId: string): Promise<{ mediaUrl?: st
     };
   }
 
-  // 2. Query Supabase with ultra-targeted queries
+  // 2. Query Supabase
   const sb = getSupabaseClient();
   if (!sb) return null;
 
   const tables = ['sipitung_reports', 'reports'];
+  const columnsToTry = ['ticket_id', 'ticketId', 'ticketid', 'id'];
 
   for (const table of tables) {
-    // Attempt single OR query first
-    try {
-      const { data, error } = await sb
-        .from(table)
-        .select('*')
-        .or(`ticket_id.ilike.${param},ticketId.ilike.${param},ticketid.ilike.${param},id.ilike.${param}`)
-        .limit(1);
-
-      if (!error && Array.isArray(data) && data.length > 0 && data[0]) {
-        const rec = fromSupabaseRecord(data[0]);
-        if (rec && rec.mediaUrl) {
-          return {
-            mediaUrl: rec.mediaUrl,
-            ticketId: rec.ticketId || param,
-            namaPelapor: rec.namaPelapor || 'Masyarakat/Warga',
-            desa: rec.desa || 'Kec. Tulis',
-            jenisKejadian: rec.jenisKejadian || 'Aduan Kedaruratan',
-            deskripsi: rec.deskripsi || 'Sesuai formulir laporan SIPITUNG.',
-            createdAt: rec.createdAt || new Date().toISOString()
-          };
-        }
-      }
-    } catch (e) {
-      // Fallback: try individual columns sequentially if OR query syntax fails
-      const columnsToTry = ['ticket_id', 'ticketId', 'id'];
-      for (const col of columnsToTry) {
-        try {
-          const { data } = await sb.from(table).select('*').ilike(col, param).limit(1);
-          if (Array.isArray(data) && data.length > 0 && data[0]) {
-            const rec = fromSupabaseRecord(data[0]);
-            if (rec && rec.mediaUrl) {
-              return {
-                mediaUrl: rec.mediaUrl,
-                ticketId: rec.ticketId || param,
-                namaPelapor: rec.namaPelapor || 'Masyarakat/Warga',
-                desa: rec.desa || 'Kec. Tulis',
-                jenisKejadian: rec.jenisKejadian || 'Aduan Kedaruratan',
-                deskripsi: rec.deskripsi || 'Sesuai formulir laporan SIPITUNG.',
-                createdAt: rec.createdAt || new Date().toISOString()
-              };
-            }
+    for (const col of columnsToTry) {
+      try {
+        // Try exact equality first (.eq)
+        const { data: eqData, error: eqErr } = await sb.from(table).select('*').eq(col, param).limit(1);
+        if (!eqErr && Array.isArray(eqData) && eqData.length > 0 && eqData[0]) {
+          const rec = fromSupabaseRecord(eqData[0]);
+          if (rec && rec.mediaUrl) {
+            return {
+              mediaUrl: rec.mediaUrl,
+              ticketId: rec.ticketId || param,
+              namaPelapor: rec.namaPelapor || 'Masyarakat/Warga',
+              desa: rec.desa || 'Kec. Tulis',
+              jenisKejadian: rec.jenisKejadian || 'Aduan Kedaruratan',
+              deskripsi: rec.deskripsi || 'Sesuai formulir laporan SIPITUNG.',
+              createdAt: rec.createdAt || new Date().toISOString()
+            };
           }
-        } catch (colErr) {
-          // continue
         }
+
+        // Try case-insensitive (.ilike)
+        const { data: ilikeData, error: ilikeErr } = await sb.from(table).select('*').ilike(col, param).limit(1);
+        if (!ilikeErr && Array.isArray(ilikeData) && ilikeData.length > 0 && ilikeData[0]) {
+          const rec = fromSupabaseRecord(ilikeData[0]);
+          if (rec && rec.mediaUrl) {
+            return {
+              mediaUrl: rec.mediaUrl,
+              ticketId: rec.ticketId || param,
+              namaPelapor: rec.namaPelapor || 'Masyarakat/Warga',
+              desa: rec.desa || 'Kec. Tulis',
+              jenisKejadian: rec.jenisKejadian || 'Aduan Kedaruratan',
+              deskripsi: rec.deskripsi || 'Sesuai formulir laporan SIPITUNG.',
+              createdAt: rec.createdAt || new Date().toISOString()
+            };
+          }
+        }
+      } catch (colErr) {
+        // continue trying next column/table safely
       }
     }
   }
@@ -688,7 +681,7 @@ app.get(['/api/reports/:id', '/reports/:id'], (req: Request, res: Response) => {
 app.get(['/api/reports/:id/photo', '/reports/:id/photo', '/api/reports/photo', '/reports/photo'], async (req: Request, res: Response) => {
   try {
     const ticketIdParam = (req.params.id || (req.query.ticketId as string) || (req.query.ticket as string) || (req.query.id as string) || '').trim();
-    const isRaw = req.query.raw === 'true' || req.query.download === 'true' || (req.headers.accept && req.headers.accept.includes('image/'));
+    const isRaw = req.query.raw === 'true' || req.query.download === 'true' || (req.headers.accept && req.headers.accept.includes('image/') && !req.headers.accept.includes('text/html'));
 
     if (!ticketIdParam) {
       res.setHeader('Content-Type', 'image/svg+xml');
@@ -1200,6 +1193,18 @@ async function startServer() {
     console.log(`SIPITUNG server running at http://localhost:${PORT}`);
   });
 }
+
+// Global Express Error Handler for Serverless Environments
+app.use((err: any, req: Request, res: Response, next: any) => {
+  console.error('[Express Global Error]', err);
+  if (!res.headersSent) {
+    res.status(500).json({
+      success: false,
+      error: 'Terjadi kesalahan internal pada server.',
+      message: err?.message || String(err)
+    });
+  }
+});
 
 export default app;
 
